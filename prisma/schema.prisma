@@ -1,0 +1,183 @@
+generator client {
+  provider = "prisma-client-js"
+}
+datasource db {
+  provider = "postgresql"
+  url = env("DATABASE_URL")
+}
+model User {
+  id String @id
+  name String
+  email String @unique
+  passwordHash String
+  repositories Repository[]
+  memberships RepositoryMember[]
+  commits Commit[]
+  sessions Session[]
+}
+model Repository {
+  id String @id
+  name String
+  visibility String @default("private")
+  ownerId String
+  owner User @relation(fields: [ownerId], references: [id])
+  document Json
+  members RepositoryMember[]
+  branches Branch[]
+  commits Commit[]
+  files FileEntry[]
+  snapshots Snapshot[]
+  metrics PerformanceMetric[]
+  activity ActivityEvent[]
+  settings RepositorySetting?
+  @@unique([ownerId, name])
+}
+model RepositoryMember {
+  id String @id @default(uuid())
+  userId String
+  repositoryId String
+  role String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  repository Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  @@unique([userId, repositoryId])
+}
+model Branch {
+  id String @id
+  name String
+  currentHead String?
+  isDefault Boolean @default(false)
+  active Boolean @default(true)
+  creatorId String
+  repositoryId String
+  repository Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  commits Commit[]
+  @@unique([repositoryId, name])
+}
+model Commit {
+  id String @id
+  hash String @unique
+  shortHash String
+  message String
+  authorId String
+  repositoryId String
+  branchId String
+  parentCommitId String?
+  createdAt DateTime @default(now())
+  author User @relation(fields: [authorId], references: [id])
+  repository Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  branch Branch @relation(fields: [branchId], references: [id])
+  parent Commit? @relation("LinearHistory", fields: [parentCommitId], references: [id])
+  children Commit[] @relation("LinearHistory")
+  parents CommitParent[] @relation("ChildCommit")
+  descendants CommitParent[] @relation("ParentCommit")
+  versions FileVersion[]
+  snapshot Snapshot?
+  deltasFrom Delta[] @relation("DeltaFrom")
+  deltasTo Delta[] @relation("DeltaTo")
+  @@index([repositoryId, createdAt])
+}
+model CommitParent {
+  commitId String
+  parentId String
+  commit Commit @relation("ChildCommit", fields: [commitId], references: [id], onDelete: Cascade)
+  parent Commit @relation("ParentCommit", fields: [parentId], references: [id])
+  @@id([commitId, parentId])
+}
+model FileEntry {
+  id String @id @default(uuid())
+  path String
+  size Int
+  mimeType String
+  fastHash String
+  secureHash String
+  modifiedAt DateTime
+  latestVersionId String? @unique
+  repositoryId String
+  repository Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  versions FileVersion[] @relation("FileVersions")
+  latestVersion FileVersion? @relation("LatestVersion", fields: [latestVersionId], references: [id])
+  @@unique([repositoryId, path])
+}
+model FileVersion {
+  id String @id @default(uuid())
+  fileEntryId String
+  commitId String
+  objectId String
+  fileEntry FileEntry @relation("FileVersions", fields: [fileEntryId], references: [id], onDelete: Cascade)
+  latestFor FileEntry? @relation("LatestVersion")
+  commit Commit @relation(fields: [commitId], references: [id], onDelete: Cascade)
+  object StoredObject @relation(fields: [objectId], references: [id])
+}
+model Snapshot {
+  id String @id @default(uuid())
+  commitId String @unique
+  repositoryId String
+  storagePath String
+  compressed Boolean @default(true)
+  byteSize Int
+  commit Commit @relation(fields: [commitId], references: [id], onDelete: Cascade)
+  repository Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+}
+model Delta {
+  id String @id @default(uuid())
+  fromCommitId String
+  toCommitId String
+  storagePath String
+  byteSize Int
+  chainDepth Int
+  from Commit @relation("DeltaFrom", fields: [fromCommitId], references: [id])
+  to Commit @relation("DeltaTo", fields: [toCommitId], references: [id], onDelete: Cascade)
+}
+model StoredObject {
+  id String @id
+  storagePath String
+  byteSize Int
+  secureHash String @unique
+  versions FileVersion[]
+  largeFiles LargeFile[]
+}
+model LargeFile {
+  id String @id @default(uuid())
+  objectId String
+  path String
+  byteSize Int
+  object StoredObject @relation(fields: [objectId], references: [id])
+}
+model ActivityEvent {
+  id String @id @default(uuid())
+  repositoryId String
+  type String
+  message String
+  createdAt DateTime @default(now())
+  repository Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+}
+model PerformanceMetric {
+  id String @id @default(uuid())
+  repositoryId String
+  operation String
+  durationMs Float
+  cacheHit Boolean
+  filesScanned Int
+  createdAt DateTime @default(now())
+  repository Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+}
+model RepositorySetting {
+  id String @id @default(uuid())
+  repositoryId String @unique
+  branchLimit Int @default(10)
+  historyDepth Int @default(50)
+  snapshotRetention Int @default(10)
+  cacheTTL Int @default(60)
+  largeFileThreshold Int @default(1048576)
+  linearHistory Boolean @default(true)
+  fastForwardOnly Boolean @default(true)
+  autoArchive Boolean @default(true)
+  repository Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+}
+model Session {
+  id String @id
+  userId String
+  expiresAt DateTime
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([expiresAt])
+}

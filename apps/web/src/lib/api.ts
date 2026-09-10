@@ -1,0 +1,10 @@
+import {useQuery,useMutation,useQueryClient} from '@tanstack/react-query';import {toast} from 'sonner';import type {Repository,User} from '../../../../packages/shared/src/index';
+export const API=import.meta.env.VITE_API_URL??'';
+export class ApiError extends Error {constructor(message:string,public status:number){super(message);}}
+export async function api<T>(path:string,method='GET',body?:unknown):Promise<T>{const response=await fetch(`${API}/api${path}`,{method,credentials:'include',headers:{'Content-Type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)})});const result=await response.json() as {data:T;error?:string};if(!response.ok)throw new ApiError(result.error??'Something went wrong',response.status);return result.data;}
+export const useUser=()=>useQuery({queryKey:['user'],queryFn:()=>api<Omit<User,'passwordHash'>>('/auth/me'),retry:false});
+export const useRepositories=()=>useQuery({queryKey:['repositories'],queryFn:()=>api<Repository[]>('/repositories')});
+export const useRepository=(id:string)=>useQuery({queryKey:['repository',id],queryFn:()=>api<Repository>(`/repositories/${id}`),enabled:!!id});
+export function useAction(){const client=useQueryClient();return useMutation({mutationFn:({path,method='POST',body}:{path:string;method?:string;body?:unknown})=>api<unknown>(path,method,body),onSuccess:()=>{void client.invalidateQueries({queryKey:['repositories']});void client.invalidateQueries({queryKey:['repository']});},onError:(e:Error)=>toast.error(e.message)});}
+export function relative(date:string){const minutes=Math.max(0,Math.floor((Date.now()-new Date(date).getTime())/60000));if(minutes<1)return 'just now';if(minutes<60)return `${minutes}m ago`;if(minutes<1440)return `${Math.floor(minutes/60)}h ago`;return `${Math.floor(minutes/1440)}d ago`;}
+export async function copy(text:string){try{await navigator.clipboard.writeText(text);toast.success('Copied to clipboard');}catch{toast.error('Clipboard unavailable. Select and copy the text manually.');}}
