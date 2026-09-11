@@ -1,16 +1,18 @@
 import express,{type Request,type Response,type NextFunction} from 'express';
-import cors from 'cors';import helmet from 'helmet';import cookieParser from 'cookie-parser';import rateLimit from 'express-rate-limit';import jwt from 'jsonwebtoken';import {hash,compare} from 'bcryptjs';import {randomUUID} from 'node:crypto';import {z} from 'zod';
+import cors from 'cors';import helmet from 'helmet';import cookieParser from 'cookie-parser';import rateLimit from 'express-rate-limit';import jwt from 'jsonwebtoken';import {hash,compare} from 'bcryptjs';import {randomUUID} from 'node:crypto';import {z} from 'zod';import {createClient,type SupabaseClient} from '@supabase/supabase-js';
 import {repositorySchema,settingsSchema,branchNameSchema,commitSchema,type Repository,type State,type User} from '../../../packages/shared/src/index';
-import {VcsError,createCommit,persistObjects,DiskStorage,mergeCheck,fastForward,rebase,addActivity,ancestors} from '../../../packages/vcs-core/src/index';
+import {VcsError,createCommit,persistObjects,SupabaseStorage,mergeCheck,fastForward,rebase,addActivity,ancestors} from '../../../packages/vcs-core/src/index';
 import {makeRepository} from './seed';import type {Store} from './store';import {MetadataCache} from './cache';
 type Authed=Request & {userId:string;sessionId:string};
 const wrap=(fn:(req:Request,res:Response)=>unknown)=> (req:Request,res:Response,next:NextFunction)=>Promise.resolve(fn(req,res)).catch(next);
 const authSchema=z.object({email:z.string().email().transform(v=>v.toLowerCase()),password:z.string().min(10).max(128)});
-export function createApp(store:Store,options:{secret:string;demo:boolean;origin?:string;storagePath?:string;onChange?:(repoId:string)=>void;cache?:MetadataCache}){
- const app=express(),cache=options.cache??new MetadataCache(),storage=new DiskStorage(options.storagePath??process.env.OBJECT_STORAGE_PATH??'../../data/objects');
+export function createApp(store:Store,options:{secret:string;demo:boolean;origin?:string;supabase?:SupabaseClient;onChange?:(repoId:string)=>void;cache?:MetadataCache}){
+ const app=express(),cache=options.cache??new MetadataCache();
+ const supabase=options.supabase??createClient(process.env.SUPABASE_URL!,process.env.SUPABASE_SERVICE_ROLE_KEY!);
+ const storage=new SupabaseStorage(supabase,'snapshots');
  app.disable('x-powered-by');app.use(helmet());app.use(cors({origin:options.origin??'http://localhost:5173',credentials:true}));app.use(express.json({limit:'12mb'}));app.use(cookieParser());
  app.use('/api',(req,res,next)=>{if(!['GET','HEAD','OPTIONS'].includes(req.method)&&req.headers.origin&&req.headers.origin!==(options.origin??'http://localhost:5173')){res.status(403).json({error:'Origin not allowed'});return;}next();});
- app.get('/api/health',(_req,res)=>res.json({data:{status:'ok',demo:options.demo,storage:process.env.STORAGE_DRIVER??'demo'}}));
+ app.get('/api/health',(_req,res)=>res.json({data:{status:'ok',demo:options.demo,storage:'supabase'}}));
  app.use('/api/auth',rateLimit({windowMs:60000,limit:30,standardHeaders:'draft-7',legacyHeaders:false}));
  async function session(res:Response,user:User){const id=randomUUID(),expiresAt=new Date(Date.now()+7*86400000).toISOString();await store.mutate(s=>{s.sessions=s.sessions.filter(v=>new Date(v.expiresAt).getTime()>Date.now());s.sessions.push({id,userId:user.id,expiresAt});});const token=jwt.sign({sub:user.id,sid:id},options.secret,{expiresIn:'7d'});res.cookie('velocity_session',token,{httpOnly:true,secure:process.env.NODE_ENV==='production',sameSite:'lax',maxAge:7*86400000,path:'/'});return token;}
  const publicUser=({passwordHash:_,...u}:User)=>u;

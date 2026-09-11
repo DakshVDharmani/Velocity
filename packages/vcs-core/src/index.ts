@@ -1,7 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { gzipSync } from 'node:zlib';
-import { mkdir, writeFile, readFile } from 'node:fs/promises';
-import { resolve, join } from 'node:path';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Repository, Commit, FileRecord, User } from '../../shared/src/index';
 export class VcsError extends Error { constructor(message:string, public status=400){super(message);} }
 export const sha256=(value:string|Buffer)=>createHash('sha256').update(value).digest('hex');
@@ -10,11 +9,12 @@ export function fastHash(content:string) {let h=0x811c9dc5;for(const byte of Buf
 export function metadataUnchanged(a:{size:number;mtimeMs:number},b:{size:number;mtimeMs:number}) {return a.size===b.size&&a.mtimeMs===b.mtimeMs;}
 export function validPath(path:string) {if(!path || path.length>500 || path.startsWith('/') || path.includes('\\') || path.includes(':') || path.split('/').some(p=>!p||p==='.'||p==='..'||p==='.velocity'||p==='.git') || /[\x00-\x1f]/.test(path))throw new VcsError('Invalid repository file path');return path;}
 export interface ObjectStorage {put(key:string,value:Buffer):Promise<void>;get(key:string):Promise<Buffer>;}
-export class DiskStorage implements ObjectStorage {
-  constructor(private root:string){}
-  private path(key:string){if(!/^[a-z0-9/-]+\.[a-z]+$/.test(key)||key.includes('..'))throw new VcsError('Invalid storage key');return join(resolve(this.root),key);}
-  async put(key:string,value:Buffer){const path=this.path(key);await mkdir(resolve(path,'..'),{recursive:true});await writeFile(path,value);}
-  async get(key:string){return readFile(this.path(key));}
+// Snapshots, deltas and large blobs live in a private Supabase Storage bucket, keyed by repository/commit.
+export class SupabaseStorage implements ObjectStorage {
+  constructor(private client:SupabaseClient, private bucket='snapshots'){}
+  private path(key:string){if(!/^[a-z0-9/-]+\.[a-z]+$/.test(key)||key.includes('..'))throw new VcsError('Invalid storage key');return key;}
+  async put(key:string,value:Buffer){const {error}=await this.client.storage.from(this.bucket).upload(this.path(key),value,{contentType:'application/octet-stream',upsert:true});if(error)throw new VcsError(`Storage write failed: ${error.message}`,502);}
+  async get(key:string){const {data,error}=await this.client.storage.from(this.bucket).download(this.path(key));if(error||!data)throw new VcsError(`Storage read failed: ${error?.message??'not found'}`,502);return Buffer.from(await data.arrayBuffer());}
 }
 export function ancestors(repo:Repository,head:string|null):string[]{const result:string[]=[];while(head){if(result.includes(head))throw new VcsError('Corrupt history');result.push(head);head=repo.commits.find(c=>c.id===head)?.parentCommitId??null;}return result;}
 export function mergeCheck(repo:Repository,sourceName:string,targetName:string){
