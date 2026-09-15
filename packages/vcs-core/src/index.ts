@@ -40,8 +40,7 @@ export function createCommit(repo:Repository,input:{message:string;branch:string
  repo.metrics.push({id:randomUUID(),operation:'commit',durationMs:Math.round((performance.now()-start)*100)/100,cacheHit:false,filesScanned:Object.keys(input.files).length,hashesAvoided:Object.keys(input.files).length-changedPaths.length,createdAt,simulated:false});return commit;
 }
 export async function persistObjects(repo:Repository,storage:ObjectStorage){
- const heads=new Set(repo.branches.map(b=>b.currentHead));
- for(let i=0;i<repo.commits.length;i++){const commit=repo.commits[i];const kind=i<repo.settings.snapshotRetention||heads.has(commit.id)?'snapshot':i<100||!repo.settings.autoArchive?'delta':'archive';
+ for(let i=0;i<repo.commits.length;i++){const commit=repo.commits[i];const kind=!commit.parentCommitId||i<repo.settings.snapshotRetention?'snapshot':i<100||!repo.settings.autoArchive?'delta':'archive';
  if(commit.storagePath&&commit.storageKind===kind)continue;
  const files:Record<string,unknown>={};for(const [path,file]of Object.entries(commit.files)){if(file.size>repo.settings.largeFileThreshold&&repo.settings.externalStorage){file.objectKey=`large/${file.secureHash}.blob`;await storage.put(file.objectKey,Buffer.from(file.content));files[path]={...file,content:undefined,objectKey:file.objectKey};}else files[path]=file;}
  let payload:unknown=files;if(kind==='delta'){const parent=repo.commits.find(c=>c.id===commit.parentCommitId);payload={base:parent?.id??null,changes:Object.fromEntries(commit.changedPaths.map(path=>[path,files[path]??null]))};}
