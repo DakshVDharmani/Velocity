@@ -14,6 +14,7 @@ model User {
   memberships RepositoryMember[]
   commits Commit[]
   sessions Session[]
+  issues Issue[]
 }
 model Repository {
   id String @id
@@ -30,7 +31,24 @@ model Repository {
   metrics PerformanceMetric[]
   activity ActivityEvent[]
   settings RepositorySetting?
+  issues Issue[]
   @@unique([ownerId, name])
+}
+model Issue {
+  id String @id
+  repositoryId String
+  creatorId String
+  title String
+  description String
+  status String @default("OPEN")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now())
+  repository Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  creator User @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  @@index([repositoryId])
+  @@index([creatorId])
+  @@index([status])
+  @@index([repositoryId, createdAt])
 }
 model RepositoryMember {
   id String @id @default(uuid())
